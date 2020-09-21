@@ -12,6 +12,7 @@ import (
 	"net/url"
 	"strconv"
 	"sync"
+	"time"
 )
 
 type Invoice struct {
@@ -37,22 +38,16 @@ type Response struct {
 type Credentials struct {
 	Username string `json:"username"`
 	Password string `json:"password"`
-}
-
-type InteractionMode struct {
-	Token   string
-	ApiHost string
+	Token    string
 }
 
 type Fusebill struct {
 	BaseUrl     string
-	Mode        InteractionMode
 	Credentials Credentials
 	Client      *http.Client
 	cookieJar   *cookiejar.Jar
 }
 
-var client *http.Client
 var mux sync.Mutex
 
 // WriteOff writes a invoice off
@@ -80,7 +75,7 @@ func (f *Fusebill) WriteOff(invoiceID string, balance float64) error {
 
 	request.Header.Set("Content-Type", "application/json")
 
-	resp, err := client.Do(request)
+	resp, err := f.Client.Do(request)
 	if err != nil {
 		return err
 	}
@@ -97,21 +92,15 @@ func (f *Fusebill) WriteOff(invoiceID string, balance float64) error {
 
 // Login user
 func (f *Fusebill) login() error {
-	if f.cookieJar != nil {
-		return nil
-	}
-
-	f.cookieJar, _ = cookiejar.New(nil)
-
-	client = &http.Client{
-		Jar: f.cookieJar,
+	if f.cookieJar == nil {
+		return errors.New("cookie jar should be set")
 	}
 
 	data := url.Values{}
 	data.Add("username", f.Credentials.Username)
 	data.Add("password", f.Credentials.Password)
 
-	resp, err := client.PostForm(f.BaseUrl+"/api/Login/", data)
+	resp, err := f.Client.PostForm(f.BaseUrl+"/api/Login/", data)
 	if err != nil {
 		return err
 	}
@@ -139,13 +128,13 @@ func (f *Fusebill) GetInvoiceBalance(invoiceID string) (float64, error) {
 
 //SendRequest sends request to the specific endpoint
 func (f *Fusebill) SendRequest(r RequestDetails) (Response, error) {
-	request, err := http.NewRequest(r.Method, f.Mode.ApiHost+r.Endpoint, r.Body)
+	request, err := http.NewRequest(r.Method, f.BaseUrl+r.Endpoint, r.Body)
 	if err != nil {
 		return Response{}, err
 	}
 
 	request.Header.Add("Content-Type", "application/json")
-	request.Header.Add("Authorization", "Basic "+f.Mode.Token)
+	request.Header.Add("Authorization", "Basic "+f.Credentials.Token)
 
 	resp, err := f.Client.Do(request)
 	if err != nil {
@@ -167,11 +156,42 @@ func (f *Fusebill) SendRequest(r RequestDetails) (Response, error) {
 }
 
 // NewClient returns the new fusebill client
-func NewClient(baseUrl string, mode InteractionMode, credentials Credentials) *Fusebill {
+func NewClient(mode string, credentials Credentials) *Fusebill {
+	var baseUrl string
+	if mode == "production" {
+		baseUrl = "https://secure.fusebill.com/v1"
+	} else {
+		baseUrl = "https://stg-secure.fusebill.com/v1"
+	}
+
 	return &Fusebill{
 		BaseUrl:     baseUrl,
-		Mode:        mode,
 		Credentials: credentials,
-		Client:      &http.Client{},
+		Client: &http.Client{
+			Timeout: time.Second * 5,
+		},
 	}
+}
+
+// NewPrivateClient returns the new fusebill client for the Private API
+func NewPrivateClient(mode string, credentials Credentials) *Fusebill {
+	var baseUrl string
+	if mode == "production" {
+		baseUrl = "https://secure.fusebill.com"
+	} else {
+		baseUrl = "https://stg-secure.fusebill.com"
+	}
+
+	client := &Fusebill{
+		BaseUrl:     baseUrl,
+		Credentials: credentials,
+		Client: &http.Client{
+			Timeout: time.Second * 5,
+		},
+	}
+
+	client.cookieJar, _ = cookiejar.New(nil)
+	client.Client.Jar = client.cookieJar
+
+	return client
 }
