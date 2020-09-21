@@ -142,7 +142,7 @@ func (f *Fusebill) SendRequest(r RequestDetails) (Response, error) {
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode != http.StatusOK {
+	if resp.StatusCode > http.StatusNoContent {
 		content, _ := ioutil.ReadAll(resp.Body)
 		return Response{}, errors.New(fmt.Sprintf("Request failed with the status code: %d, content: %s", resp.StatusCode, string(content)))
 	}
